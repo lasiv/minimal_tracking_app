@@ -594,19 +594,27 @@ class OverviewPage extends StatefulWidget {
 
 class _OverviewPageState extends State<OverviewPage> {
   List<DailyRecord> history = [];
+  List<Habit> habits = [];
 
   @override
   void initState() {
     super.initState();
-    _loadHistory();
+    _loadData();
   }
 
-  Future<void> _loadHistory() async {
+  Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
+      // load history
       history = prefs.getString('history') != null
           ? (json.decode(prefs.getString('history')!) as List)
               .map((j) => DailyRecord.fromJson(j))
+              .toList()
+          : [];
+      // load habits for table order/titles
+      habits = prefs.getString('habits') != null
+          ? (json.decode(prefs.getString('habits')!) as List)
+              .map((j) => Habit.fromJson(j))
               .toList()
           : [];
     });
@@ -614,22 +622,34 @@ class _OverviewPageState extends State<OverviewPage> {
 
   @override
   Widget build(BuildContext context) {
-    final titles = history.isNotEmpty ? history.first.habitDeltas.keys.toList() : <String>[];
+    final maxDay = history.isNotEmpty ? history.map((d) => d.day).reduce(max) : 0;
+    final days = List<int>.generate(maxDay, (i) => i + 1);
     return Scaffold(
       appBar: AppBar(title: Text('Overview')),
       body: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: DataTable(
           columns: [
-            DataColumn(label: Text('Day')),
-            ...titles.map((t) => DataColumn(label: Text(t)))
+            DataColumn(label: Text('Habit')),
+            ...days.map((day) => DataColumn(label: Text('Day $day'))),
           ],
-          rows: history
-              .map((d) => DataRow(cells: [
-                    DataCell(Text(d.day.toString())),
-                    ...d.habitDeltas.values.map((v) => DataCell(Text(v.toStringAsFixed(2)))).toList()
-                  ]))
-              .toList(),
+          rows: habits.map((h) {
+            return DataRow(
+              cells: [
+                DataCell(Text(h.title)),
+                ...days.map((day) {
+                  final rec = history.firstWhere(
+                    (d) => d.day == day,
+                    orElse: () => DailyRecord(day, {}),
+                  );
+                  final val = rec.habitDeltas[h.title];
+                  return DataCell(
+                    Text(val != null ? val.toStringAsFixed(2) : '-'),
+                  );
+                }).toList(),
+              ],
+            );
+          }).toList(),
         ),
       ),
     );
