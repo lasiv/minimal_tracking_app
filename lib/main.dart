@@ -1,24 +1,65 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
-import 'dart:async';
+
 import 'package:flutter/material.dart';
-// Make sure to add to your pubspec.yaml dependencies:
-// shared_preferences: ^2.0.0
 import 'package:shared_preferences/shared_preferences.dart';
 
 typedef JsonMap = Map<String, dynamic>;
 
 void main() => runApp(HabitTrackerApp());
 
-class HabitTrackerApp extends StatelessWidget {
+class HabitTrackerApp extends StatefulWidget {
+  @override
+  _HabitTrackerAppState createState() => _HabitTrackerAppState();
+}
+
+class _HabitTrackerAppState extends State<HabitTrackerApp> {
+  ThemeMode _themeMode = ThemeMode.light;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadThemeMode();
+  }
+
+  Future<void> _loadThemeMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    final isDark = prefs.getBool('darkMode') ?? false;
+    setState(() {
+      _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
+    });
+  }
+
+  Future<void> _updateTheme(bool isDark) async {
+    setState(() => _themeMode = isDark ? ThemeMode.dark : ThemeMode.light);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('darkMode', isDark);
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Habit Tracker',
-      theme: ThemeData(primarySwatch: Colors.blue),
+      theme: ThemeData(
+        brightness: Brightness.light,
+        primarySwatch: Colors.blue,
+      ),
+      darkTheme: ThemeData(
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: Colors.grey[900],
+        primaryColor: Colors.grey[800],
+        cardColor: Colors.grey[800],
+        textTheme: TextTheme(
+          bodyMedium: TextStyle(color: Colors.white),
+          bodySmall: TextStyle(color: Colors.white70),
+          titleLarge: TextStyle(color: Colors.white),
+        ),
+      ),
+      themeMode: _themeMode,
       home: HomePage(),
       routes: {
-        '/settings': (_) => SettingsPage(),
+        '/settings': (_) => SettingsPage(onThemeChanged: _updateTheme),
         '/overview': (_) => OverviewPage(),
       },
     );
@@ -28,8 +69,14 @@ class HabitTrackerApp extends StatelessWidget {
 // === CONFIG ===
 class AppConfig {
   TimeOfDay newDayTime;
-  double startPosMultiplier, stepUp, lengthPosStreak, maxPosMultiplier;
-  double startNegMultiplier, stepDown, lengthNegStreak, maxNegMultiplier;
+  double startPosMultiplier,
+      stepUp,
+      lengthPosStreak,
+      maxPosMultiplier;
+  double startNegMultiplier,
+      stepDown,
+      lengthNegStreak,
+      maxNegMultiplier;
 
   AppConfig({
     required this.newDayTime,
@@ -56,7 +103,8 @@ class AppConfig {
       );
 
   factory AppConfig.fromJson(JsonMap j) => AppConfig(
-        newDayTime: TimeOfDay(hour: j['newDayHour'], minute: j['newDayMinute']),
+        newDayTime:
+            TimeOfDay(hour: j['newDayHour'], minute: j['newDayMinute']),
         startPosMultiplier: (j['startPosMultiplier'] as num).toDouble(),
         stepUp: (j['stepUp'] as num).toDouble(),
         lengthPosStreak: (j['lengthPosStreak'] as num).toDouble(),
@@ -81,6 +129,7 @@ class AppConfig {
       };
 }
 
+// === HABIT MODEL ===
 class Habit {
   String title;
   int daysPosStreak = 0;
@@ -126,13 +175,15 @@ class Habit {
   double getPosMultiplier(AppConfig cfg) {
     if (daysPosStreak <= 0) return cfg.startPosMultiplier;
     final periods = ((daysPosStreak - 1) / cfg.lengthPosStreak).floor();
-    return min(cfg.startPosMultiplier + periods * cfg.stepUp, cfg.maxPosMultiplier);
+    return min(cfg.startPosMultiplier + periods * cfg.stepUp,
+        cfg.maxPosMultiplier);
   }
 
   double getNegMultiplier(AppConfig cfg) {
     if (daysNegStreak <= 0) return cfg.startNegMultiplier;
     final periods = ((daysNegStreak - 1) / cfg.lengthNegStreak).floor();
-    return min(cfg.startNegMultiplier + periods * cfg.stepDown, cfg.maxNegMultiplier);
+    return min(cfg.startNegMultiplier + periods * cfg.stepDown,
+        cfg.maxNegMultiplier);
   }
 
   void answer(bool positive, AppConfig cfg) {
@@ -173,17 +224,24 @@ class Habit {
   }
 }
 
+// === DAILY RECORD ===
 class DailyRecord {
   final int day;
   final Map<String, double> habitDeltas;
   DailyRecord(this.day, this.habitDeltas);
+
   factory DailyRecord.fromJson(JsonMap j) => DailyRecord(
         j['day'],
         Map<String, double>.from(j['deltas']),
       );
-  JsonMap toJson() => {'day': day, 'deltas': habitDeltas};
+
+  JsonMap toJson() => {
+        'day': day,
+        'deltas': habitDeltas,
+      };
 }
 
+// === HOME PAGE ===
 class HomePage extends StatefulWidget {
   @override
   _HomePageState createState() => _HomePageState();
@@ -193,11 +251,9 @@ class _HomePageState extends State<HomePage> {
   AppConfig cfg = AppConfig.defaultConfig();
   List<Habit> habits = [];
   List<DailyRecord> history = [];
-  double totalPoints = 0;
-  double dailyDelta = 0;
+  double totalPoints = 0, dailyDelta = 0;
   int currentDay = 1;
-  bool dayOver = false;
-  bool isEditing = false;
+  bool dayOver = false, isEditing = false;
   Timer? _timer;
 
   @override
@@ -215,7 +271,9 @@ class _HomePageState extends State<HomePage> {
 
   void _checkRollover() {
     final now = TimeOfDay.fromDateTime(DateTime.now());
-    if (!dayOver && now.hour == cfg.newDayTime.hour && now.minute == cfg.newDayTime.minute) {
+    if (!dayOver &&
+        now.hour == cfg.newDayTime.hour &&
+        now.minute == cfg.newDayTime.minute) {
       setState(() => dayOver = true);
       _saveData();
     }
@@ -251,8 +309,10 @@ class _HomePageState extends State<HomePage> {
   Future<void> _saveData() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('config', json.encode(cfg.toJson()));
-    await prefs.setString('habits', json.encode(habits.map((h) => h.toJson()).toList()));
-    await prefs.setString('history', json.encode(history.map((d) => d.toJson()).toList()));
+    await prefs.setString(
+        'habits', json.encode(habits.map((h) => h.toJson()).toList()));
+    await prefs.setString(
+        'history', json.encode(history.map((d) => d.toJson()).toList()));
     await prefs.setDouble('totalPoints', totalPoints);
     await prefs.setInt('currentDay', currentDay);
     await prefs.setBool('dayOver', dayOver);
@@ -264,9 +324,21 @@ class _HomePageState extends State<HomePage> {
     if (isEditing) return;
     setState(() {
       final h = habits[i];
-      if (h.answeredToday) dailyDelta -= h.lastDelta;
-      h.answer(pos, cfg);
-      dailyDelta += h.lastDelta;
+      if (h.answeredToday) {
+        if (h.wasPositive == pos) {
+          // Toggle off the current choice.
+          dailyDelta -= h.lastDelta;
+          h.clearAnswer();
+        } else {
+          // Switching answer, subtract previous delta then apply new answer.
+          dailyDelta -= h.lastDelta;
+          h.answer(pos, cfg);
+          dailyDelta += h.lastDelta;
+        }
+      } else {
+        h.answer(pos, cfg);
+        dailyDelta += h.lastDelta;
+      }
     });
     _saveData();
   }
@@ -278,13 +350,16 @@ class _HomePageState extends State<HomePage> {
         builder: (_) => AlertDialog(
           title: Text('Incomplete'),
           content: Text('Please answer all habits before continuing.'),
-          actions: [TextButton(onPressed: () => Navigator.pop(context), child: Text('OK'))],
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: Text('OK'))
+          ],
         ),
       );
       return;
     }
     setState(() {
-      history.add(DailyRecord(currentDay, {for (var h in habits) h.title: h.lastDelta}));
+      history.add(DailyRecord(currentDay,
+          {for (var h in habits) h.title: h.lastDelta}));
       totalPoints = max(0, totalPoints + dailyDelta);
       dailyDelta = 0;
       currentDay++;
@@ -294,62 +369,59 @@ class _HomePageState extends State<HomePage> {
     _saveData();
   }
 
-  void _toggleEdit() {
-    setState(() => isEditing = !isEditing);
-  }
+  void _toggleEdit() => setState(() => isEditing = !isEditing);
 
   Future<void> _addHabit() async {
-    final controller = TextEditingController();
+    final ctrl = TextEditingController();
     await showDialog(
       context: context,
       builder: (_) => AlertDialog(
         title: Text('New Habit'),
-        content: TextField(controller: controller, decoration: InputDecoration(hintText: 'Habit name')),
+        content: TextField(controller: ctrl, decoration: InputDecoration(hintText: 'Name')),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: Text('Cancel')),
           TextButton(onPressed: () {
-            final name = controller.text.trim();
+            final name = ctrl.text.trim();
             if (name.isNotEmpty) {
               setState(() => habits.add(Habit(title: name)));
               _saveData();
             }
             Navigator.pop(context);
-          }, child: Text('Add'))
+          }, child: Text('Add')),
         ],
       ),
     );
   }
 
-  Future<void> _renameHabit(int index) async {
-    final h = habits[index];
-    final controller = TextEditingController(text: h.title);
+  Future<void> _renameHabit(int i) async {
+    final h = habits[i], ctrl = TextEditingController(text: h.title);
     await showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: Text('Rename Habit'),
-        content: TextField(controller: controller),
+        title: Text('Rename "${h.title}"'),
+        content: TextField(controller: ctrl),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: Text('Cancel')),
           TextButton(onPressed: () {
-            final newName = controller.text.trim();
+            final newName = ctrl.text.trim();
             if (newName.isNotEmpty) {
               setState(() => h.title = newName);
               _saveData();
             }
             Navigator.pop(context);
-          }, child: Text('Save'))
+          }, child: Text('Save')),
         ],
       ),
     );
   }
 
-  Future<void> _deleteHabit(int index) async {
-    final h = habits[index];
+  Future<void> _deleteHabit(int i) async {
+    final h = habits[i];
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: Text('Delete "${h.title}"?'),
-        content: Text('This will remove its data from history.'),
+        content: Text('This will remove its history too.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: Text('Cancel')),
           TextButton(onPressed: () => Navigator.pop(context, true), child: Text('Delete', style: TextStyle(color: Colors.red))),
@@ -358,20 +430,18 @@ class _HomePageState extends State<HomePage> {
     );
     if (confirm == true) {
       setState(() {
-        habits.removeAt(index);
-        for (var rec in history) {
-          rec.habitDeltas.remove(h.title);
-        }
+        habits.removeAt(i);
+        history.forEach((rec) => rec.habitDeltas.remove(h.title));
       });
       _saveData();
     }
   }
 
-  void _reorderHabits(int oldIndex, int newIndex) {
+  void _reorderHabits(int oldI, int newI) {
     setState(() {
-      if (newIndex > oldIndex) newIndex--;
-      final item = habits.removeAt(oldIndex);
-      habits.insert(newIndex, item);
+      if (newI > oldI) newI--;
+      final item = habits.removeAt(oldI);
+      habits.insert(newI, item);
       _saveData();
     });
   }
@@ -383,17 +453,17 @@ class _HomePageState extends State<HomePage> {
 
   Map<String, double> _streakStats(String title) {
     int longest = 0, curr = 0;
-    List<int> runs = [];
-    for (var rec in history) {
-      if ((rec.habitDeltas[title] ?? 0) > 0) curr++;
+    final runs = <int>[];
+    for (var r in history) {
+      if ((r.habitDeltas[title] ?? 0) > 0) curr++;
       else {
         if (curr > 0) runs.add(curr);
         longest = max(longest, curr);
         curr = 0;
       }
     }
-    if (curr > 0) { runs.add(curr); longest = max(longest, curr); }
-    double avg = runs.isEmpty ? 0 : runs.reduce((a, b) => a + b) / runs.length;
+    if (curr > 0) runs..add(curr)..sort();
+    final double avg = runs.isEmpty ? 0.0 : runs.reduce((a, b) => a + b).toDouble() / runs.length;
     return {'longest': longest.toDouble(), 'avg': avg};
   }
 
@@ -403,21 +473,25 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: Text('Day $currentDay - Habits'),
         actions: [
-          IconButton(icon: Icon(Icons.edit), onPressed: _toggleEdit),
-          IconButton(icon: Icon(Icons.table_chart), onPressed: () => Navigator.pushNamed(context, '/overview')),
-          IconButton(icon: Icon(Icons.settings), onPressed: _goToSettings),
+          IconButton(icon: Icon(isEditing ? Icons.check : Icons.edit), onPressed: _toggleEdit),
+          if (!isEditing) IconButton(icon: Icon(Icons.table_chart), onPressed: () => Navigator.pushNamed(context, '/overview')),
+          if (!isEditing) IconButton(icon: Icon(Icons.settings), onPressed: _goToSettings),
         ],
       ),
       body: Column(children: [
         Padding(
-          padding: EdgeInsets.all(16),
+          padding: const EdgeInsets.all(16),
           child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Text('Total: \$${totalPoints.toStringAsFixed(2)}', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+            Text('Total: ${totalPoints.toStringAsFixed(2)}',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
             if (dailyDelta != 0) ...[
               SizedBox(width: 8),
               Text(
-                (dailyDelta > 0 ? '+' : '-') + '\$${dailyDelta.abs().toStringAsFixed(2)}',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: dailyDelta > 0 ? Colors.green : Colors.red),
+                (dailyDelta > 0 ? '+' : '-') + '${dailyDelta.abs().toStringAsFixed(2)}',
+                style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: dailyDelta > 0 ? Colors.green : Colors.red),
               )
             ]
           ]),
@@ -425,40 +499,69 @@ class _HomePageState extends State<HomePage> {
         Expanded(
           child: isEditing
               ? ReorderableListView(
+                  buildDefaultDragHandles: false,
                   onReorder: _reorderHabits,
                   children: [
                     for (int i = 0; i < habits.length; i++)
                       ListTile(
                         key: ValueKey(habits[i]),
+                        // <-- custom drag handle on the very left
+                        leading: ReorderableDragStartListener(
+                          index: i,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                            child: Icon(Icons.drag_handle),
+                          ),
+                        ),
                         title: Text(habits[i].title),
-                        leading: Icon(Icons.drag_handle),
-                        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                          IconButton(icon: Icon(Icons.edit), onPressed: () => _renameHabit(i)),
-                          IconButton(icon: Icon(Icons.delete, color: Colors.red), onPressed: () => _deleteHabit(i)),
-                        ]),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: Icon(Icons.edit),
+                              onPressed: () => _renameHabit(i),
+                            ),
+                            IconButton(
+                              icon: Icon(Icons.delete, color: Colors.red),
+                              onPressed: () => _deleteHabit(i),
+                            ),
+                          ],
+                        ),
                       ),
                   ],
                 )
               : ListView.builder(
                   itemCount: habits.length,
                   itemBuilder: (ctx, i) {
-                    final h = habits[i];
-                    final s = _streakStats(h.title);
+                    final h = habits[i], s = _streakStats(h.title);
+                    final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
+                    final Color? cardColor = h.answeredToday
+                        ? (h.wasPositive
+                            ? (isDarkMode ? Colors.green[700] : Colors.green[100])
+                            : (isDarkMode ? Colors.red[700] : Colors.red[100]))
+                        : null;
+                    final Color textColor = isDarkMode ? Colors.white : Colors.black;
+
                     return Card(
-                      color: h.answeredToday
-                          ? (h.wasPositive ? Colors.green[100] : Colors.red[100])
-                          : null,
-                      margin: EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                      color: cardColor,
+                      margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
                       child: ListTile(
+                        textColor: textColor,
+                        iconColor: textColor,
                         title: Text(h.title, style: TextStyle(fontSize: 20)),
                         subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Text('Streak: ' + (h.daysPosStreak > 0 ? '+${h.daysPosStreak}' : '${h.daysNegStreak > 0 ? '-${h.daysNegStreak}' : '0'}') + ' days'),
+                          Text(
+                              'Streak: ' +
+                                  (h.daysPosStreak > 0
+                                      ? '+${h.daysPosStreak}'
+                                      : (h.daysNegStreak > 0 ? '-${h.daysNegStreak}' : '0')) +
+                                  ' days'),
                           Text('Longest: ${s['longest']!.toInt()} days'),
                           Text('Avg: ${s['avg']!.toStringAsFixed(2)} days'),
                         ]),
                         trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                          IconButton(icon: Icon(Icons.check, color: Colors.green), onPressed: () => _onAnswer(i, true)),
-                          IconButton(icon: Icon(Icons.close, color: Colors.red), onPressed: () => _onAnswer(i, false)),
+                          IconButton(icon: Icon(Icons.check, color: textColor), onPressed: () => _onAnswer(i, true)),
+                          IconButton(icon: Icon(Icons.close, color: textColor), onPressed: () => _onAnswer(i, false)),
                         ]),
                       ),
                     );
@@ -467,10 +570,7 @@ class _HomePageState extends State<HomePage> {
         ),
       ]),
       floatingActionButton: isEditing
-          ? FloatingActionButton(
-              onPressed: _addHabit,
-              child: Icon(Icons.add),
-            )
+          ? FloatingActionButton(onPressed: _addHabit, child: Icon(Icons.add))
           : (dayOver
               ? FloatingActionButton.extended(
                   onPressed: _attemptNextDay,
@@ -482,18 +582,24 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
+// === SETTINGS PAGE ===
 class SettingsPage extends StatefulWidget {
+  final ValueChanged<bool> onThemeChanged;
+  SettingsPage({required this.onThemeChanged});
+
   @override
   _SettingsPageState createState() => _SettingsPageState();
 }
 
 class _SettingsPageState extends State<SettingsPage> {
   AppConfig cfg = AppConfig.defaultConfig();
+  bool _isDark = false;
 
   @override
   void initState() {
     super.initState();
     _loadConfig();
+    _loadDarkMode();
   }
 
   Future<void> _loadConfig() async {
@@ -510,83 +616,93 @@ class _SettingsPageState extends State<SettingsPage> {
     await prefs.setString('config', json.encode(cfg.toJson()));
   }
 
+  Future<void> _loadDarkMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() => _isDark = prefs.getBool('darkMode') ?? false);
+  }
+
   Future<void> _pickTime() async {
     final t = await showTimePicker(context: context, initialTime: cfg.newDayTime);
-    if (t != null) setState(() {
-      cfg.newDayTime = t;
+    if (t != null) {
+      setState(() => cfg.newDayTime = t);
       _saveConfig();
-    });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text('Settings')),
-      body: ListView(
-        padding: EdgeInsets.all(16),
-        children: [
-          ListTile(
-            title: Text('New Day Time'),
-            subtitle: Text(cfg.newDayTime.format(context)),
-            trailing: Icon(Icons.access_time),
-            onTap: _pickTime,
-          ),
-          Divider(),
-          Text('Scoring Settings', style: TextStyle(fontSize: 18)),
-          _buildField('Start Pos', cfg.startPosMultiplier, (v) => cfg.startPosMultiplier = v),
-          _buildField('Step Up', cfg.stepUp, (v) => cfg.stepUp = v),
-          _buildField('Length Pos', cfg.lengthPosStreak, (v) => cfg.lengthPosStreak = v),
-          _buildField('Max Pos', cfg.maxPosMultiplier, (v) => cfg.maxPosMultiplier = v),
-          _buildField('Start Neg', cfg.startNegMultiplier, (v) => cfg.startNegMultiplier = v),
-          _buildField('Step Down', cfg.stepDown, (v) => cfg.stepDown = v),
-          _buildField('Length Neg', cfg.lengthNegStreak, (v) => cfg.lengthNegStreak = v),
-          _buildField('Max Neg', cfg.maxNegMultiplier, (v) => cfg.maxNegMultiplier = v),
-          SizedBox(height: 24),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () async {
-              final prefs = await SharedPreferences.getInstance();
-              await prefs.remove('habits');
-              await prefs.remove('history');
-              await prefs.remove('totalPoints');
-              await prefs.remove('currentDay');
-              await prefs.remove('dayOver');
-              Navigator.popUntil(context, ModalRoute.withName('/'));
-            },
-            child: Text('Reset All Data'),
-          ),
-        ],
-      ),
+      body: ListView(padding: EdgeInsets.all(16), children: [
+        ListTile(
+          title: Text('New Day Time'),
+          subtitle: Text(cfg.newDayTime.format(context)),
+          trailing: Icon(Icons.access_time),
+          onTap: _pickTime,
+        ),
+        Divider(),
+        SwitchListTile(
+          title: Text('Dark Mode'),
+          value: _isDark,
+          onChanged: (v) {
+            setState(() => _isDark = v);
+            widget.onThemeChanged(v);
+          },
+        ),
+        Divider(),
+        Text('Scoring Settings', style: TextStyle(fontSize: 18)),
+        _buildField('Start Pos', cfg.startPosMultiplier, (v) => cfg.startPosMultiplier = v),
+        _buildField('Step Up', cfg.stepUp, (v) => cfg.stepUp = v),
+        _buildField('Length Pos', cfg.lengthPosStreak, (v) => cfg.lengthPosStreak = v),
+        _buildField('Max Pos', cfg.maxPosMultiplier, (v) => cfg.maxPosMultiplier = v),
+        _buildField('Start Neg', cfg.startNegMultiplier, (v) => cfg.startNegMultiplier = v),
+        _buildField('Step Down', cfg.stepDown, (v) => cfg.stepDown = v),
+        _buildField('Length Neg', cfg.lengthNegStreak, (v) => cfg.lengthNegStreak = v),
+        _buildField('Max Neg', cfg.maxNegMultiplier, (v) => cfg.maxNegMultiplier = v),
+        SizedBox(height: 24),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+          onPressed: () async {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.remove('habits');
+            await prefs.remove('history');
+            await prefs.remove('totalPoints');
+            await prefs.remove('currentDay');
+            await prefs.remove('dayOver');
+            Navigator.popUntil(context, ModalRoute.withName('/'));
+          },
+          child: Text('Reset All Data'),
+        ),
+      ]),
     );
   }
 
   Widget _buildField(String label, double val, Function(double) onChanged) {
     return Padding(
       padding: EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Expanded(child: Text(label)),
-          SizedBox(
-            width: 80,
-            child: TextFormField(
-              initialValue: val.toString(),
-              keyboardType: TextInputType.numberWithOptions(decimal: true),
-              onFieldSubmitted: (s) {
-                final v = double.tryParse(s);
-                if (v != null) setState(() {
-                  onChanged(v);
-                  _saveConfig();
-                });
-              },
-              decoration: InputDecoration(border: OutlineInputBorder()),
-            ),
+      child: Row(children: [
+        Expanded(child: Text(label)),
+        SizedBox(
+          width: 80,
+          child: TextFormField(
+            initialValue: val.toString(),
+            keyboardType: TextInputType.numberWithOptions(decimal: true),
+            onFieldSubmitted: (s) {
+              final v = double.tryParse(s);
+              if (v != null) {
+                setState(() => onChanged(v));
+                _saveConfig();
+              }
+            },
+            decoration: InputDecoration(border: OutlineInputBorder()),
           ),
-        ],
-      ),
+        ),
+      ]),
     );
   }
 }
 
+// === OVERVIEW PAGE ===
 class OverviewPage extends StatefulWidget {
   @override
   _OverviewPageState createState() => _OverviewPageState();
@@ -605,13 +721,11 @@ class _OverviewPageState extends State<OverviewPage> {
   Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
-      // load history
       history = prefs.getString('history') != null
           ? (json.decode(prefs.getString('history')!) as List)
               .map((j) => DailyRecord.fromJson(j))
               .toList()
           : [];
-      // load habits for table order/titles
       habits = prefs.getString('habits') != null
           ? (json.decode(prefs.getString('habits')!) as List)
               .map((j) => Habit.fromJson(j))
@@ -622,8 +736,11 @@ class _OverviewPageState extends State<OverviewPage> {
 
   @override
   Widget build(BuildContext context) {
-    final maxDay = history.isNotEmpty ? history.map((d) => d.day).reduce(max) : 0;
+    final maxDay = history.isNotEmpty
+        ? history.map((d) => d.day).reduce(max)
+        : 0;
     final days = List<int>.generate(maxDay, (i) => i + 1);
+
     return Scaffold(
       appBar: AppBar(title: Text('Overview')),
       body: SingleChildScrollView(
@@ -631,24 +748,22 @@ class _OverviewPageState extends State<OverviewPage> {
         child: DataTable(
           columns: [
             DataColumn(label: Text('Habit')),
-            ...days.map((day) => DataColumn(label: Text('Day $day'))),
+            ...days.map((d) => DataColumn(label: Text('Day $d'))),
           ],
           rows: habits.map((h) {
-            return DataRow(
-              cells: [
-                DataCell(Text(h.title)),
-                ...days.map((day) {
-                  final rec = history.firstWhere(
-                    (d) => d.day == day,
-                    orElse: () => DailyRecord(day, {}),
-                  );
-                  final val = rec.habitDeltas[h.title];
-                  return DataCell(
-                    Text(val != null ? val.toStringAsFixed(2) : '-'),
-                  );
-                }).toList(),
-              ],
-            );
+            return DataRow(cells: [
+              DataCell(Text(h.title)),
+              ...days.map((day) {
+                final rec = history.firstWhere(
+                  (r) => r.day == day,
+                  orElse: () => DailyRecord(day, {}),
+                );
+                final val = rec.habitDeltas[h.title];
+                return DataCell(Text(val != null
+                    ? val.toStringAsFixed(2)
+                    : '-'));
+              }).toList(),
+            ]);
           }).toList(),
         ),
       ),
