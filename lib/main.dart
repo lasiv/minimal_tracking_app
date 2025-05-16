@@ -105,7 +105,6 @@ class Habit {
     h.answeredToday = j['answeredToday'] as bool? ?? false;
     h.wasPositive = j['wasPositive'] as bool? ?? false;
     h.lastDelta = (j['lastDelta'] as num?)?.toDouble() ?? 0.0;
-    // initialize backups for clearAnswer
     if (h.answeredToday) {
       h._backupPosStreak = h.daysPosStreak - (h.wasPositive ? 1 : 0);
       h._backupNegStreak = h.daysNegStreak - (h.wasPositive ? 0 : 1);
@@ -138,7 +137,6 @@ class Habit {
 
   void answer(bool positive, AppConfig cfg) {
     if (!answeredToday) {
-      // backup current state
       _backupPosStreak = daysPosStreak;
       _backupNegStreak = daysNegStreak;
       _backupPoints = points;
@@ -195,9 +193,11 @@ class _HomePageState extends State<HomePage> {
   AppConfig cfg = AppConfig.defaultConfig();
   List<Habit> habits = [];
   List<DailyRecord> history = [];
-  double totalPoints = 0, dailyDelta = 0;
+  double totalPoints = 0;
+  double dailyDelta = 0;
   int currentDay = 1;
   bool dayOver = false;
+  bool isEditing = false;
   Timer? _timer;
 
   @override
@@ -261,6 +261,7 @@ class _HomePageState extends State<HomePage> {
   bool get allAnswered => habits.every((h) => h.answeredToday);
 
   void _onAnswer(int i, bool pos) {
+    if (isEditing) return;
     setState(() {
       final h = habits[i];
       if (h.answeredToday) dailyDelta -= h.lastDelta;
@@ -277,9 +278,7 @@ class _HomePageState extends State<HomePage> {
         builder: (_) => AlertDialog(
           title: Text('Incomplete'),
           content: Text('Please answer all habits before continuing.'),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: Text('OK'))
-          ],
+          actions: [TextButton(onPressed: () => Navigator.pop(context), child: Text('OK'))],
         ),
       );
       return;
@@ -293,6 +292,88 @@ class _HomePageState extends State<HomePage> {
       habits.forEach((h) => h.resetDaily());
     });
     _saveData();
+  }
+
+  void _toggleEdit() {
+    setState(() => isEditing = !isEditing);
+  }
+
+  Future<void> _addHabit() async {
+    final controller = TextEditingController();
+    await showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('New Habit'),
+        content: TextField(controller: controller, decoration: InputDecoration(hintText: 'Habit name')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: Text('Cancel')),
+          TextButton(onPressed: () {
+            final name = controller.text.trim();
+            if (name.isNotEmpty) {
+              setState(() => habits.add(Habit(title: name)));
+              _saveData();
+            }
+            Navigator.pop(context);
+          }, child: Text('Add'))
+        ],
+      ),
+    );
+  }
+
+  Future<void> _renameHabit(int index) async {
+    final h = habits[index];
+    final controller = TextEditingController(text: h.title);
+    await showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('Rename Habit'),
+        content: TextField(controller: controller),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: Text('Cancel')),
+          TextButton(onPressed: () {
+            final newName = controller.text.trim();
+            if (newName.isNotEmpty) {
+              setState(() => h.title = newName);
+              _saveData();
+            }
+            Navigator.pop(context);
+          }, child: Text('Save'))
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteHabit(int index) async {
+    final h = habits[index];
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('Delete "${h.title}"?'),
+        content: Text('This will remove its data from history.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: Text('Delete', style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+    if (confirm == true) {
+      setState(() {
+        habits.removeAt(index);
+        for (var rec in history) {
+          rec.habitDeltas.remove(h.title);
+        }
+      });
+      _saveData();
+    }
+  }
+
+  void _reorderHabits(int oldIndex, int newIndex) {
+    setState(() {
+      if (newIndex > oldIndex) newIndex--;
+      final item = habits.removeAt(oldIndex);
+      habits.insert(newIndex, item);
+      _saveData();
+    });
   }
 
   void _goToSettings() async {
@@ -311,10 +392,7 @@ class _HomePageState extends State<HomePage> {
         curr = 0;
       }
     }
-    if (curr > 0) {
-      runs.add(curr);
-      longest = max(longest, curr);
-    }
+    if (curr > 0) { runs.add(curr); longest = max(longest, curr); }
     double avg = runs.isEmpty ? 0 : runs.reduce((a, b) => a + b) / runs.length;
     return {'longest': longest.toDouble(), 'avg': avg};
   }
@@ -325,21 +403,10 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: Text('Day $currentDay - Habits'),
         actions: [
-            IconButton(
-              icon: Icon(Icons.edit),
-              onPressed: () {
-                // TODO: implement edit functionality (e.g., add/remove habits)
-              },
-            ),
-            IconButton(
-              icon: Icon(Icons.table_chart),
-              onPressed: () => Navigator.pushNamed(context, '/overview'),
-            ),
-            IconButton(
-              icon: Icon(Icons.settings),
-              onPressed: _goToSettings,
-            ),
-          ],
+          IconButton(icon: Icon(Icons.edit), onPressed: _toggleEdit),
+          IconButton(icon: Icon(Icons.table_chart), onPressed: () => Navigator.pushNamed(context, '/overview')),
+          IconButton(icon: Icon(Icons.settings), onPressed: _goToSettings),
+        ],
       ),
       body: Column(children: [
         Padding(
@@ -350,46 +417,67 @@ class _HomePageState extends State<HomePage> {
               SizedBox(width: 8),
               Text(
                 (dailyDelta > 0 ? '+' : '-') + '\$${dailyDelta.abs().toStringAsFixed(2)}',
-                style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: dailyDelta > 0 ? Colors.green : Colors.red),
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: dailyDelta > 0 ? Colors.green : Colors.red),
               )
             ]
           ]),
         ),
         Expanded(
-            child: ListView.builder(
-                itemCount: habits.length,
-                itemBuilder: (ctx, i) {
-                  final h = habits[i];
-                  final s = _streakStats(h.title);
-                  return Card(
-                    color:
-                        h.answeredToday ? (h.wasPositive ? Colors.green[100] : Colors.red[100]) : null,
-                    margin: EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-                    child: ListTile(
-                      title: Text(h.title, style: TextStyle(fontSize: 20)),
-                      subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text('Streak: ' + (h.daysPosStreak > 0 ? '+${h.daysPosStreak}' : '${h.daysNegStreak > 0 ? '-${h.daysNegStreak}' : '0'}') + ' days'),
-                        Text('Longest: ${s['longest']!.toInt()} days'),
-                        Text('Avg: ${s['avg']!.toStringAsFixed(2)} days'),
-                      ]),
-                      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                        IconButton(icon: Icon(Icons.check, color: Colors.green), onPressed: () => _onAnswer(i, true)),
-                        IconButton(icon: Icon(Icons.close, color: Colors.red), onPressed: () => _onAnswer(i, false)),
-                      ]),
-                    ),
-                  );
-                })),
+          child: isEditing
+              ? ReorderableListView(
+                  onReorder: _reorderHabits,
+                  children: [
+                    for (int i = 0; i < habits.length; i++)
+                      ListTile(
+                        key: ValueKey(habits[i]),
+                        title: Text(habits[i].title),
+                        leading: Icon(Icons.drag_handle),
+                        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                          IconButton(icon: Icon(Icons.edit), onPressed: () => _renameHabit(i)),
+                          IconButton(icon: Icon(Icons.delete, color: Colors.red), onPressed: () => _deleteHabit(i)),
+                        ]),
+                      ),
+                  ],
+                )
+              : ListView.builder(
+                  itemCount: habits.length,
+                  itemBuilder: (ctx, i) {
+                    final h = habits[i];
+                    final s = _streakStats(h.title);
+                    return Card(
+                      color: h.answeredToday
+                          ? (h.wasPositive ? Colors.green[100] : Colors.red[100])
+                          : null,
+                      margin: EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                      child: ListTile(
+                        title: Text(h.title, style: TextStyle(fontSize: 20)),
+                        subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text('Streak: ' + (h.daysPosStreak > 0 ? '+${h.daysPosStreak}' : '${h.daysNegStreak > 0 ? '-${h.daysNegStreak}' : '0'}') + ' days'),
+                          Text('Longest: ${s['longest']!.toInt()} days'),
+                          Text('Avg: ${s['avg']!.toStringAsFixed(2)} days'),
+                        ]),
+                        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                          IconButton(icon: Icon(Icons.check, color: Colors.green), onPressed: () => _onAnswer(i, true)),
+                          IconButton(icon: Icon(Icons.close, color: Colors.red), onPressed: () => _onAnswer(i, false)),
+                        ]),
+                      ),
+                    );
+                  },
+                ),
+        ),
       ]),
-      floatingActionButton: dayOver
-          ? FloatingActionButton.extended(
-              onPressed: _attemptNextDay,
-              label: Text(allAnswered ? 'Continue' : 'Pending'),
-              icon: Icon(allAnswered ? Icons.arrow_forward : Icons.access_time),
+      floatingActionButton: isEditing
+          ? FloatingActionButton(
+              onPressed: _addHabit,
+              child: Icon(Icons.add),
             )
-          : null,
+          : (dayOver
+              ? FloatingActionButton.extended(
+                  onPressed: _attemptNextDay,
+                  label: Text(allAnswered ? 'Continue' : 'Pending'),
+                  icon: Icon(allAnswered ? Icons.arrow_forward : Icons.access_time),
+                )
+              : null),
     );
   }
 }
@@ -434,65 +522,67 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text('Settings')),
-      body: ListView(padding: EdgeInsets.all(16), children: [
-        ListTile(
-          title: Text('New Day Time'),
-          subtitle: Text(cfg.newDayTime.format(context)),
-          trailing: Icon(Icons.access_time),
-          onTap: _pickTime,
-        ),
-        Divider(),
-        Text('Scoring Settings', style: TextStyle(fontSize: 18)),
-        _buildField('Start Pos', cfg.startPosMultiplier, (v) => cfg.startPosMultiplier = v),
-        _buildField('Step Up', cfg.stepUp, (v) => cfg.stepUp = v),
-        _buildField('Length Pos', cfg.lengthPosStreak, (v) => cfg.lengthPosStreak = v),
-        _buildField('Max Pos', cfg.maxPosMultiplier, (v) => cfg.maxPosMultiplier = v),
-        _buildField('Start Neg', cfg.startNegMultiplier, (v) => cfg.startNegMultiplier = v),
-        _buildField('Step Down', cfg.stepDown, (v) => cfg.stepDown = v),
-        _buildField('Length Neg', cfg.lengthNegStreak, (v) => cfg.lengthNegStreak = v),
-        _buildField('Max Neg', cfg.maxNegMultiplier, (v) => cfg.maxNegMultiplier = v),
-        SizedBox(height: 24),
-        
-        SizedBox(height: 12),
-        ElevatedButton(
-          style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-          onPressed: () async {
-            final prefs = await SharedPreferences.getInstance();
-            // Only clear habit-related data, keep settings intact
-            await prefs.remove('habits');
-            await prefs.remove('history');
-            await prefs.remove('totalPoints');
-            await prefs.remove('currentDay');
-            await prefs.remove('dayOver');
-            Navigator.popUntil(context, ModalRoute.withName('/'));
-          },
-          child: Text('Reset All Data'),
-        ),
-      ]),
+      body: ListView(
+        padding: EdgeInsets.all(16),
+        children: [
+          ListTile(
+            title: Text('New Day Time'),
+            subtitle: Text(cfg.newDayTime.format(context)),
+            trailing: Icon(Icons.access_time),
+            onTap: _pickTime,
+          ),
+          Divider(),
+          Text('Scoring Settings', style: TextStyle(fontSize: 18)),
+          _buildField('Start Pos', cfg.startPosMultiplier, (v) => cfg.startPosMultiplier = v),
+          _buildField('Step Up', cfg.stepUp, (v) => cfg.stepUp = v),
+          _buildField('Length Pos', cfg.lengthPosStreak, (v) => cfg.lengthPosStreak = v),
+          _buildField('Max Pos', cfg.maxPosMultiplier, (v) => cfg.maxPosMultiplier = v),
+          _buildField('Start Neg', cfg.startNegMultiplier, (v) => cfg.startNegMultiplier = v),
+          _buildField('Step Down', cfg.stepDown, (v) => cfg.stepDown = v),
+          _buildField('Length Neg', cfg.lengthNegStreak, (v) => cfg.lengthNegStreak = v),
+          _buildField('Max Neg', cfg.maxNegMultiplier, (v) => cfg.maxNegMultiplier = v),
+          SizedBox(height: 24),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () async {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.remove('habits');
+              await prefs.remove('history');
+              await prefs.remove('totalPoints');
+              await prefs.remove('currentDay');
+              await prefs.remove('dayOver');
+              Navigator.popUntil(context, ModalRoute.withName('/'));
+            },
+            child: Text('Reset All Data'),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildField(String label, double val, Function(double) onChanged) {
     return Padding(
       padding: EdgeInsets.symmetric(vertical: 8),
-      child: Row(children: [
-        Expanded(child: Text(label)),
-        SizedBox(
-          width: 80,
-          child: TextFormField(
-            initialValue: val.toString(),
-            keyboardType: TextInputType.numberWithOptions(decimal: true),
-            onFieldSubmitted: (s) {
-              final v = double.tryParse(s);
-              if (v != null) setState(() {
-                onChanged(v);
-                _saveConfig();
-              });
-            },
-            decoration: InputDecoration(border: OutlineInputBorder()),
+      child: Row(
+        children: [
+          Expanded(child: Text(label)),
+          SizedBox(
+            width: 80,
+            child: TextFormField(
+              initialValue: val.toString(),
+              keyboardType: TextInputType.numberWithOptions(decimal: true),
+              onFieldSubmitted: (s) {
+                final v = double.tryParse(s);
+                if (v != null) setState(() {
+                  onChanged(v);
+                  _saveConfig();
+                });
+              },
+              decoration: InputDecoration(border: OutlineInputBorder()),
+            ),
           ),
-        ),
-      ]),
+        ],
+      ),
     );
   }
 }
@@ -537,9 +627,7 @@ class _OverviewPageState extends State<OverviewPage> {
           rows: history
               .map((d) => DataRow(cells: [
                     DataCell(Text(d.day.toString())),
-                    ...d.habitDeltas.values
-                        .map((v) => DataCell(Text(v.toStringAsFixed(2))))
-                        .toList()
+                    ...d.habitDeltas.values.map((v) => DataCell(Text(v.toStringAsFixed(2)))).toList()
                   ]))
               .toList(),
         ),
