@@ -1,6 +1,6 @@
 # habit_app
 
-A new Flutter project.
+A new Flutter project. This is a simple Habit Tracking App rewarding you with points. The app is programmed to the bare minimum, had no testing and might be buggy.
 
 ## Getting Started
 
